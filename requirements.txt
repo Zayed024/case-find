@@ -1,0 +1,7 @@
+streamlit
+playwright
+psycopg2
+SQLAlchemy
+beautifulsoup4
+python-dotenv
+#playwright install
