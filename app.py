@@ -8,11 +8,12 @@ from functools import lru_cache
 import subprocess
 import json
 import sys
+import requests 
 
 # Load environment variables from a .env file
 load_dotenv()
 
-# --- Database Setup ---
+# Database Setup 
 def init_db():
     """
     Initializes a PostgreSQL database connection and creates a table for logging queries.
@@ -65,7 +66,7 @@ def log_query(case_type, case_number, filing_year, raw_response):
             cursor.close()
             conn.close()
 
-# --- Scraping Logic via Subprocess ---
+# Scraping Logic via Subprocess 
 
 @st.cache_data(show_spinner=True)
 def get_case_types():
@@ -74,25 +75,30 @@ def get_case_types():
     The result is cached to avoid calling the script on every page refresh.
     """
     try:
+        SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "scraper.py")
+
         result = subprocess.run(
-            [sys.executable, "scraper.py", "get_types"],
+            [sys.executable, SCRIPT_PATH, "get_types"],
             capture_output=True,
             text=True,
             check=True
         )
         output = json.loads(result.stdout)
+        
         if "error" in output:
-            st.error(output["error"])
+            st.error(f"Scraper error: {output['error']}")
+            if 'traceback' in output:
+                st.code(output['traceback'], language="python")
             return ["W.P.(C)", "C.R.P.", "C.S.(OS)", "CRL.M.C."]
         
-        types = output["result"]
-        if isinstance(types, str):
-            st.error(types)
+        types = output.get("result")
+        if not isinstance(types, list):
+            st.error("Scraper returned an invalid format for case types.")
             return ["W.P.(C)", "C.R.P.", "C.S.(OS)", "CRL.M.C."]
         
         return types
     except subprocess.CalledProcessError as e:
-        st.error(f"Could not get case types. Subprocess failed with error: {e.stderr}")
+        st.error(f"Subprocess failed:\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
         return ["W.P.(C)", "C.R.P.", "C.S.(OS)", "CRL.M.C."]
     except Exception as e:
         st.error(f"An unexpected error occurred while getting case types: {e}")
@@ -103,36 +109,75 @@ def fetch_case_data(case_type, case_number, filing_year):
     Calls the scraper.py script as a subprocess to scrape case data.
     """
     try:
-        st.warning("A browser window will open for manual CAPTCHA solving. Please solve it and click the 'Go' button. Then return to your terminal and press Enter.")
+        SCRIPT_PATH = os.path.join(os.path.dirname(__file__), "scraper.py")
+        
         
         result = subprocess.run(
-            [sys.executable, "scraper.py", "search", case_type, case_number, filing_year],
+            [sys.executable, SCRIPT_PATH, "search", case_type, case_number, filing_year],
             capture_output=True,
             text=True,
             check=True
         )
         
         output = json.loads(result.stdout)
+
         if "error" in output:
-            return {"error": output["error"]}, None
+            error_message = output.get('error', 'An unknown error occurred.')
+            traceback_str = output.get('traceback', '')
+            return {"error": error_message, "traceback": traceback_str}, None
         
         return output["result"], output["raw_response"]
     except subprocess.CalledProcessError as e:
-        return {"error": f"Subprocess failed with error: {e.stderr}"}, None
+        return {"error": f"Subprocess failed with exit code {e.returncode}.\n\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}"}, None
     except Exception as e:
         return {"error": str(e)}, None
 
+def render_case_details(data):
+    """Renders the parsed case details and PDF links."""
+    st.header("Case Details")
+    st.markdown(f"**Parties:** {data['parties_names']}")
+    st.markdown(f"**Filing Date:** {data['filing_date']}")
+    st.markdown(f"**Next Hearing Date:** {data['next_hearing_date']}")
+    
+    st.header("Orders & Judgments")
+    if data['pdf_links']:
+        for i, pdf_info in enumerate(data['pdf_links']):
+            date = pdf_info.get('date', f"Order {i+1}")
+            pdf_url = pdf_info.get('pdf_url')
+            
+            if pdf_url:
+                st.markdown(f"- **{date}:** [View PDF]({pdf_url})")
+                try:
+                    # Add a download button for each PDF
+                    response = requests.get(pdf_url)
+                    if response.status_code == 200:
+                        st.download_button(
+                            label=f"Download {os.path.basename(pdf_url)}",
+                            data=response.content,
+                            file_name=f"order_{date.replace('/', '-')}.pdf",
+                            mime="application/pdf",
+                            key=f"download_pdf_{i}"
+                        )
+                    else:
+                        st.markdown(f"*(Could not download PDF from {pdf_url})*")
+                except requests.exceptions.RequestException as e:
+                    st.markdown(f"*(Error downloading PDF: {e})*")
+            else:
+                st.markdown(f"- **{date}:** No PDF link available.")
+    else:
+        st.markdown("No order or judgment links found.")
 
-# --- Streamlit UI ---
+
+# Streamlit UI 
 def main():
     st.set_page_config(page_title="Court-Data Fetcher", layout="wide")
-    st.title("🏛️ Delhi High Court Case Status")
+    st.title(" Delhi High Court Case Status")
     st.markdown(
         """
         This application fetches case metadata and the latest orders/judgments from the Delhi High Court website.
         Please provide the case details below.
         
-        **Note:** A new browser window will open for you to manually solve the CAPTCHA for each search.
+        
         """
     )
     
@@ -153,22 +198,12 @@ def main():
                 log_query(case_type, case_number, filing_year, raw_response)
                 
                 st.success("Case data fetched successfully!")
+                render_case_details(parsed_data) 
                 
-                data = parsed_data
-                st.header("Case Details")
-                st.markdown(f"**Parties:** {data['parties_names']}")
-                st.markdown(f"**Filing Date:** {data['filing_date']}")
-                st.markdown(f"**Next Hearing Date:** {data['next_hearing_date']}")
-                
-                st.header("Orders & Judgments")
-                if data['pdf_links']:
-                    for i, link in enumerate(data['pdf_links']):
-                        abs_link = f"https://delhihighcourt.nic.in/{link}"
-                        st.markdown(f"[{os.path.basename(link)}]({abs_link})")
-                else:
-                    st.markdown("No order or judgment links found.")
             else:
                 st.error(f"Error fetching data: {parsed_data.get('error', 'Unknown error')}")
+                if 'traceback' in parsed_data:
+                    st.code(parsed_data['traceback'], language="python")
                 
     st.sidebar.markdown("---")
     st.sidebar.info("This application is for demonstration purposes only. The accuracy of the data depends on the court's website structure.")
