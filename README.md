@@ -140,7 +140,7 @@ The application will automatically solve the CAPTCHA, navigate to the results, f
 
 
 ## Optional Extras & Future Enhancements
-
+- **Deploy**: deploy the app on streamlit community cloud after making a few changes to the code
 - **Dockerfile**: Create a Dockerfile for easy containerization and deployment of the application  
 - **Pagination for Multiple Orders**: If a case has multiple pages of orders/judgments, extend the `parse_order_links` function to automatically navigate through all pagination links and collect all available PDFs  
 - **Simple Unit Tests**: Implement unit tests for key scraping and parsing functions (`get_case_types`, `parse_all_tables`, `parse_order_links`) using `pytest` to ensure data extraction reliability  
