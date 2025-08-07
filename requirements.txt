@@ -4,4 +4,8 @@ psycopg2
 SQLAlchemy
 beautifulsoup4
 python-dotenv
+regex
 #playwright install
+
+
+
